@@ -4,7 +4,7 @@ TOOLS = tools
 
 SOURCES += src/app.c
 
-INCLUDES += -Iinclude -I
+INCLUDES += -Iinclude
 
 LIB = lib/launchpad_pro.a
 
@@ -43,7 +43,7 @@ $(SYX): $(HEX) $(HEXTOSYX) $(SIMULATOR)
 
 # build the tool for conversion of ELF files to sysex, ready for upload to the unit
 $(HEXTOSYX):
-	$(HOST_GPP) -Ofast -std=c++0x -I./$(TOOLS)/libintelhex/include ./$(TOOLS)/libintelhex/src/intelhex.cc $(TOOLS)/hextosyx.cpp -o $(HEXTOSYX)
+	$(HOST_GPP) -Ofast -std=c++0x -I./$(TOOLS)/libintelhex/include tools/libintelhex/src/intelhex.cc $(TOOLS)/hextosyx.cpp -o $(HEXTOSYX)
 
 # build the simulator (it's a very basic test of the code before it runs on the device!)
 $(SIMULATOR):
