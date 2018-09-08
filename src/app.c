@@ -62,6 +62,15 @@ enum {
 };
 
 enum {
+    PAD,
+    BPM,
+    COLOR_CHANGE,
+    PAGE_CHANGE,
+    ACTIVATE,
+    N_BUTTON_TYPES
+};
+
+enum {
     RED,
     ORANGE,
     YELLOW,
@@ -98,7 +107,7 @@ static const u8* _ColorValues[N_COLORS] = {
 };
 
 // Shift Button
-static const u8 _colorChangeKey = 80;
+static const u8 _colorChangeButton = 80;
 static const u8 _colorChangeColor = WHITE;
 
 // Activate Button
@@ -106,7 +115,7 @@ static const u8 _activateButton = 50;
 static const u8 _activateButtonColor = ORANGE;
 
 // Tap to BPM Button
-static const u8 _BPMButton = 10;
+static const u8 _BPMButton = 18;
 static const u8 _BPMButtonColor = RED;
 
 
@@ -138,7 +147,7 @@ u8 _pageButtonColors[PAGE_COUNT] = {
 };
 
 // Pads
-static const u8 PadsMap[BUTTON_COUNT] = {
+static const u8 _padsMap[BUTTON_COUNT] = {
     11, 12, 13, 14, 15, 16, 17, 18,
     21, 22, 23, 24, 25, 26, 27, 28,
     31, 32, 33, 34, 35, 36, 37, 38,
@@ -159,14 +168,14 @@ static const u8 BLINK_RATE_MS = 150;
 u8 _buttons[PAGE_COUNT][BUTTON_COUNT] = {{0}};
 u8 _buttonColors[PAGE_COUNT][BUTTON_COUNT] = {{0}};
 u8 _buttonActive[PAGE_COUNT][BUTTON_COUNT] = {{0}};
-u8 saveBuffer[PAGE_COUNT * BUTTON_COUNT * 2] = {0};
 u8 _buttonBlinkState = ON;
 u8 _currentPage = 0;
+u8 _pagesOn[PAD_COUNT] = {OFF};
 u8 _currentMode = SEND_EVENTS;
-u8 midiMessageOn = NOTEON;
-u8 midiMessageOff = NOTEOFF;
-u8 midiClockRate = 0;
-u32 time_ms = 0;
+u8 _midiMessageOn = NOTEON;
+u8 _midiMessageOff = NOTEOFF;
+u8 _midiClockRate = 0;
+u32 _timeMs = 0;
 
 //______________________________________________________________________________
 
@@ -178,45 +187,24 @@ void app_surface_event(u8 type, u8 index, u8 value)
         {
             if (value)
             {
-                if (is_equal_button(index)) {
-                    u8 buttonIndex = get_button_index(index);
-                    u8 channelIndex = (64 * (_currentPage % 2)) + buttonIndex;
-                    u8* color = get_color_array(_currentPage, buttonIndex);
-                    if (_currentMode == SEND_EVENTS && (_buttonActive[_currentPage][buttonIndex]) == ON) {
-                        _buttons[_currentPage][buttonIndex] = !_buttons[_currentPage][buttonIndex];
-                        if (_buttons[_currentPage][buttonIndex] == ON) {
-                            hal_send_midi(USBSTANDALONE, midiMessageOn | 0, channelIndex, 127);
-                            turn_off_button_col(index);
-                        } else {
-                            hal_send_midi(USBSTANDALONE, midiMessageOff | 0, channelIndex, 0);
-                            hal_plot_led(TYPEPAD, index, color[0], color[1], color[2]);
-                        }
-                    } else if (_currentMode == SET_COLOR && _buttonActive[_currentPage][buttonIndex] == ON){
-                        _buttonColors[_currentPage][buttonIndex] += 1;
-                        _buttonColors[_currentPage][buttonIndex] %= N_COLORS;
-                        u8* color = get_color_array(_currentPage, buttonIndex);
-                        hal_plot_led(TYPEPAD, index, color[0], color[1], color[2]);
-                    } else if (_currentMode == SET_ACTIVATE) {
-                        if (_buttonActive[_currentPage][buttonIndex] == ON) {
-                            hal_plot_led(TYPEPAD, index, 0, 0, 0);
-                        } else {
-                            hal_plot_led(TYPEPAD, index, color[0], color[1], color[2]);
-                        }
-                        _buttonActive[_currentPage][buttonIndex] = !_buttonActive[_currentPage][buttonIndex];
-                    }
-                } else if (is_BPM_button(index)) {
-                    triggerMidiClock();
-                    //hal_plot_led(TYPEPAD, index, _ColorValues[_BPMButtonColor][0], _ColorValues[_BPMButtonColor][1], _ColorValues[_BPMButtonColor][2]);
-                } else if (is_equal_color_change(index)) {
-                    run_color_change();
-                    break;
-                } else if (is_equal_page_change(index)) {
-                    run_page_change(index);
-                    break;
-                } else if (is_equal_activate(index)){
-                    run_activate();
-                } else {
-                    break;
+                switch(get_button_type(index)) {
+                    case PAD:
+                        run_pad_button(index);
+                        break;
+                    case BPM:
+                        triggerMidiClock();
+                        break;
+                    case COLOR_CHANGE:
+                        run_color_change();
+                        break;
+                    case PAGE_CHANGE:
+                        run_page_change(index);
+                        break;
+                    case ACTIVATE:
+                        run_activate();
+                        break;
+                    default:
+                        break;
                 }
             }
         } 
@@ -228,7 +216,6 @@ void app_surface_event(u8 type, u8 index, u8 value)
             {
                 // save button states to flash (reload them by power cycling the hardware
                 save();
-                //hal_write_flash(0, _Buttons, BUTTON_COUNT);
             }
         }
         break;
@@ -263,16 +250,7 @@ void app_sysex_event(u8 port, u8 * data, u16 count)
 
 void app_aftertouch_event(u8 index, u8 value)
 {
-    if (is_BPM_button(index))
-    {
-        u8* color = _ColorValues[_BPMButtonColor];
-        hal_plot_led(TYPEPAD, index, _ColorValues[_BPMButtonColor][0],
-                     _ColorValues[_BPMButtonColor][1], _ColorValues[_BPMButtonColor][2]);
-    }
-    // example - send poly aftertouch to MIDI ports
-    //hal_send_midi(USBMIDI, POLYAFTERTOUCH | 0, index, value);
-    //hal_plot_led(TYPEPAD, index, value, 0, 0);
-    
+  
 }
 
 //______________________________________________________________________________
@@ -298,21 +276,19 @@ void app_timer_event()
     static u8 sendClockMs = 0;
     static u8 onoff = 0;
 
-    time_ms++;
+    _timeMs++;
     blinkMs++;
 
-
-
-    if (midiClockRate != 0) {
+    if (_midiClockRate != 0) {
         sendClockMs++;
-        if (sendClockMs >= midiClockRate * 24) {
+        if (sendClockMs >= _midiClockRate / 2) {
             onoff = !onoff;
             if (onoff)
                 hal_plot_led(TYPEPAD, _BPMButton, 50,50,50);
             else
                 hal_plot_led(TYPEPAD, _BPMButton, 0, 0, 0);
             sendClockMs = 0;
-            hal_send_midi(USBSTANDALONE , MIDITIMINGCLOCK, 0, 0);
+            //hal_send_midi(USBSTANDALONE , MIDITIMINGCLOCK, 0, 0);
         }
     }
     
@@ -320,15 +296,24 @@ void app_timer_event()
     {
         blinkMs = 0;
         u8 channel = 0;
-        u8* color;
         for (u8 i = 0; i < BUTTON_COUNT; i++) {
             if (_buttons[_currentPage][i] == ON) {
+                const u8* color = get_color_array(_currentPage, i);
                 channel = get_button_channel(i);
-                color = get_color_array(_currentPage, i);
                 if (_buttonBlinkState) {
                     hal_plot_led(TYPEPAD, channel, color[0], color[1], color[2]);
                 } else {
                     hal_plot_led(TYPEPAD, channel, 0, 0, 0);
+                }
+            }
+        }
+        for (u8 i = 0; i < PAD_COUNT; i++) {
+            if (_pagesOn[i] == ON && i != _currentPage) {
+                const u8* color = _ColorValues[_pageButtonColors[i]];
+                if (_buttonBlinkState) {
+                    hal_plot_led(TYPEPAD, _pageButtons[i], color[0], color[1], color[2]);
+                } else {
+                    hal_plot_led(TYPEPAD, _pageButtons[i], 0, 0, 0);
                 }
             }
         }
@@ -341,59 +326,69 @@ void app_timer_event()
 void app_init(const u16 *adc_raw)
 {
     load();
-    // for (u8 i = 0; i < PAGE_COUNT; i++) {
-    //     for (u8 j = 0; j < BUTTON_COUNT; j++) {
-    //         _buttonColors[i][j] = WHITE;
-    //     }
-    // }
-
     u8 pageColor = _pageButtonColors[_currentPage];
     hal_plot_led(TYPEPAD, _pageButtons[_currentPage], _ColorValues[pageColor][0], _ColorValues[pageColor][1], _ColorValues[pageColor][2]);
-
     load_current_page();
 	_ADC = adc_raw;
 }
 
 void load_current_page() {
-    if (_currentMode == SEND_EVENTS) {
-        for (u8 i = 0; i < BUTTON_COUNT; i++) {
-            if (_buttonActive[_currentPage][i] == ON) {
-                u8 padColor = _buttonColors[_currentPage][i];
-                hal_plot_led(TYPEPAD, PadsMap[i], _ColorValues[padColor][0], _ColorValues[padColor][1], _ColorValues[padColor][2]);
-            } else if (_buttonActive[_currentPage][i] == OFF){
-                hal_plot_led(TYPEPAD, PadsMap[i], 0, 0, 0);
-                _buttonActive[_currentPage][i] = OFF;
-            } else {
-                _buttonActive[_currentPage][i] = OFF;
+    switch (_currentMode) {
+        case SEND_EVENTS:
+            for (u8 i = 0; i < BUTTON_COUNT; i++) {
+                if (_buttonActive[_currentPage][i] == ON) {
+                    u8 padColor = _buttonColors[_currentPage][i];
+                    hal_plot_led(TYPEPAD, _padsMap[i], _ColorValues[padColor][0], _ColorValues[padColor][1], _ColorValues[padColor][2]);
+                } else if (_buttonActive[_currentPage][i] == OFF){
+                    hal_plot_led(TYPEPAD, _padsMap[i], 0, 0, 0);
+                    _buttonActive[_currentPage][i] = OFF;
+                } else {
+                    _buttonActive[_currentPage][i] = OFF;
+                }
             }
-        }
-    } else if (_currentMode == SET_COLOR){
-        for (u8 i = 0; i < BUTTON_COUNT; i++) {
-            if (_buttonActive[_currentPage][i] == ON) {
-                u8 padColor = _buttonColors[_currentPage][i];
-                hal_plot_led(TYPEPAD, PadsMap[i], _ColorValues[padColor][0], _ColorValues[padColor][1], _ColorValues[padColor][2]);
-            } else if (_buttonActive[_currentPage][i] == OFF){
-                hal_plot_led(TYPEPAD, PadsMap[i], 0, 0, 0);
-                _buttonActive[_currentPage][i] = OFF;
-            } else {
-                _buttonActive[_currentPage][i] = OFF;
+            break;
+        case SET_COLOR:
+            for (u8 i = 0; i < BUTTON_COUNT; i++) {
+                if (_buttonActive[_currentPage][i] == ON) {
+                    u8 padColor = _buttonColors[_currentPage][i];
+                    hal_plot_led(TYPEPAD, _padsMap[i], _ColorValues[padColor][0], _ColorValues[padColor][1], _ColorValues[padColor][2]);
+                } else if (_buttonActive[_currentPage][i] == OFF){
+                    hal_plot_led(TYPEPAD, _padsMap[i], 0, 0, 0);
+                    _buttonActive[_currentPage][i] = OFF;
+                } else {
+                    _buttonActive[_currentPage][i] = OFF;
+                }
             }
-        }
-    } else if (_currentMode == SET_ACTIVATE) {
-        u8* color;
-        for (u8 i = 0; i < BUTTON_COUNT; i++) {
-            if(_buttonActive[_currentPage][i] == ON) {
-                color = get_color_array(_currentPage, i);
-                hal_plot_led(TYPEPAD, PadsMap[i], color[0], color[1], color[2]);
-            } else if (_buttonActive[_currentPage][i] == OFF){
-                hal_plot_led(TYPEPAD, PadsMap[i], 0, 0, 0);
-                _buttonActive[_currentPage][i] = OFF;
-            } else {
-                _buttonActive[_currentPage][i] = OFF;
+            break;
+        case SET_ACTIVATE:
+            for (u8 i = 0; i < BUTTON_COUNT; i++) {
+                if(_buttonActive[_currentPage][i] == ON) {
+                    const u8* color;
+                    color = get_color_array(_currentPage, i);
+                    hal_plot_led(TYPEPAD, _padsMap[i], color[0], color[1], color[2]);
+                } else if (_buttonActive[_currentPage][i] == OFF){
+                    hal_plot_led(TYPEPAD, _padsMap[i], 0, 0, 0);
+                    _buttonActive[_currentPage][i] = OFF;
+                } else {
+                    _buttonActive[_currentPage][i] = OFF;
+                }
             }
-        }
+            break;
+        default:
+            break;
     }
-    
+}
+
+void load_new_page(u8 channel) {
+    u8 newPage = (channel - _pageButtons[0]);
+    if ((newPage != _currentPage) && (newPage < PAD_COUNT) && (0 <= newPage)) {
+        _pagesOn[_currentPage] = page_has_active_buttons(_currentPage);
+        hal_plot_led(TYPEPAD, _pageButtons[_currentPage], 0, 0, 0);
+        const u8* color = _ColorValues[_pageButtonColors[newPage]];
+        hal_plot_led(TYPEPAD, _pageButtons[newPage], color[0], color[1], color[2]);
+        _currentPage = newPage;
+    }
+    load_current_page();
 }
 
 void turn_off_button_col(u8 channel) {
@@ -406,7 +401,7 @@ void turn_off_button_col(u8 channel) {
         if (_buttons[_currentPage][tempIndex] == ON) {
             u8 midiChannel = (64 * (_currentPage % 2)) + tempIndex;
             u8 midiValue = (_currentPage > 1) ? 20 : 10;
-            u8* color = get_color_array(_currentPage, tempIndex);
+            const u8* color = get_color_array(_currentPage, tempIndex);
             hal_plot_led(TYPEPAD, tempChannel, color[0], color[1], color[2]);
             hal_send_midi(TYPEPAD, NOTEOFF | 0, midiChannel, midiValue);
             _buttons[_currentPage][tempIndex] = OFF;
@@ -415,23 +410,41 @@ void turn_off_button_col(u8 channel) {
     }
 }
 
+u8 get_button_type(u8 index) {
+
+    if (is_pad_button(index)) {
+        return PAD;
+    } else if (is_BPM_button(index)) {
+        return BPM;
+    } else if (is_color_change(index)) {
+        return COLOR_CHANGE;
+    } else if (is_page_change(index)) {
+        return PAGE_CHANGE;
+    } else if (is_activate(index)){
+        return ACTIVATE;
+    } else {
+        return N_BUTTON_TYPES;
+    }
+}
+
 u8 get_button_channel(u8 index) {
-    return PadsMap[index];
+    return _padsMap[index];
 }
 
 u8 get_button_index(u8 channel) {
     for (u8 index = 0; index < PAD_COUNT; index++) {
-        if (PadsMap[index] == channel)
+        if (_padsMap[index] == channel)
             return index;
     }
+    return 101;
 }
 
-u8* get_color_array(u8 currentPage, u8 index) {
+const u8* get_color_array(u8 currentPage, u8 index) {
     return _ColorValues[_buttonColors[currentPage][index]];
 }
 
-u8 is_equal_color_change(u8 channel) {
-    return (channel == _colorChangeKey);
+u8 is_color_change(u8 channel) {
+    return (channel == _colorChangeButton);
 }
 
 void run_color_change() {
@@ -440,15 +453,15 @@ void run_color_change() {
 
     _currentMode = (_currentMode == SET_COLOR) ? SEND_EVENTS : SET_COLOR;
     if (_currentMode == SET_COLOR) {
-        u8* color = _ColorValues[_colorChangeColor];
-        hal_plot_led(TYPEPAD, _colorChangeKey, color[0], color[1], color[2]);
+        const u8* color = _ColorValues[_colorChangeColor];
+        hal_plot_led(TYPEPAD, _colorChangeButton, color[0], color[1], color[2]);
     } else {
-        hal_plot_led(TYPEPAD, _colorChangeKey, 0, 0, 0);
+        hal_plot_led(TYPEPAD, _colorChangeButton, 0, 0, 0);
     }
     load_current_page();
 }
 
-u8 is_equal_page_change(u8 channel) {
+u8 is_page_change(u8 channel) {
     for (u8 i = 0; i < PAGE_COUNT; i++) {
         if (channel == _pageButtons[i]) {
             return 1;
@@ -458,21 +471,17 @@ u8 is_equal_page_change(u8 channel) {
 }
 
 void run_page_change(u8 channel) {
-    hal_plot_led(TYPEPAD, _pageButtons[_currentPage], 0, 0, 0);
-    _currentPage = channel - _pageButtons[0];
-    u8 pageColor = _pageButtonColors[_currentPage];
-    hal_plot_led(TYPEPAD, _pageButtons[_currentPage], _ColorValues[pageColor][0], _ColorValues[pageColor][1], _ColorValues[pageColor][2]);
+    load_new_page(channel);
     if (_currentPage < 2) {
-        midiMessageOn = NOTEON;
-        midiMessageOff = NOTEOFF;
+        _midiMessageOn = NOTEON;
+        _midiMessageOff = NOTEOFF;
     } else {
-        midiMessageOn = CC;
-        midiMessageOff = CC;
+        _midiMessageOn = CC;
+        _midiMessageOff = CC;
     }
-    load_current_page();
 }
 
-u8 is_equal_button(u8 channel) {
+u8 is_pad_button(u8 channel) {
     for (u8 i = 0; i < BUTTON_COUNT; i++) {
         if (get_button_channel(i) == channel)
             return 1;
@@ -480,7 +489,37 @@ u8 is_equal_button(u8 channel) {
     return 0;
 }
 
-u8 is_equal_activate(u8 channel) {
+void run_pad_button(u8 channel) {
+    u8 buttonIndex = get_button_index(channel);
+    u8 channelIndex = (64 * (_currentPage % 2)) + buttonIndex;
+    const u8* color = get_color_array(_currentPage, buttonIndex);
+    if (_currentMode == SEND_EVENTS && (_buttonActive[_currentPage][buttonIndex]) == ON) {
+        _buttons[_currentPage][buttonIndex] = !_buttons[_currentPage][buttonIndex];
+        if (_buttons[_currentPage][buttonIndex] == ON) {
+            hal_send_midi(USBSTANDALONE, _midiMessageOn | 0, channelIndex, 127);
+            turn_off_button_col(channel);
+        } else {
+            hal_send_midi(USBSTANDALONE, _midiMessageOff | 0, channelIndex, 0);
+            hal_plot_led(TYPEPAD, channel, color[0], color[1], color[2]);
+        }
+    } else if (_currentMode == SET_COLOR && _buttonActive[_currentPage][buttonIndex] == ON){
+        _buttonColors[_currentPage][buttonIndex] += 1;
+        _buttonColors[_currentPage][buttonIndex] %= N_COLORS;
+        const u8* color = get_color_array(_currentPage, buttonIndex);
+        hal_plot_led(TYPEPAD, channel, color[0], color[1], color[2]);
+    } else if (_currentMode == SET_ACTIVATE) {
+        if (_buttonActive[_currentPage][buttonIndex] == ON) {
+            hal_plot_led(TYPEPAD, channel, 0, 0, 0);
+            if (_buttons[_currentPage][buttonIndex] == ON)
+                hal_send_midi(USBSTANDALONE, _midiMessageOff | 0, channelIndex, 0);
+        } else {
+            hal_plot_led(TYPEPAD, channel, color[0], color[1], color[2]);
+        }
+        _buttonActive[_currentPage][buttonIndex] = !_buttonActive[_currentPage][buttonIndex];
+    }
+}
+
+u8 is_activate(u8 channel) {
     return (channel == _activateButton);
 }
 
@@ -489,7 +528,7 @@ void run_activate() {
         run_color_change();
     _currentMode = (_currentMode == SET_ACTIVATE) ? SEND_EVENTS : SET_ACTIVATE;
     if (_currentMode == SET_ACTIVATE) {
-        u8* color = _ColorValues[_activateButtonColor];
+        const u8* color = _ColorValues[_activateButtonColor];
         hal_plot_led(TYPEPAD, _activateButton, color[0], color[1], color[2]);
     } else {
         hal_plot_led(TYPEPAD, _activateButton, 0, 0, 0);
@@ -545,34 +584,44 @@ void load() {
     }
 }
 
-void triggerMidiClock(){
+void triggerMidiClock() {
     static u32 lastTime = 0;
     static u32 timeDeltas[MIDI_CLOCK_TRIGGER_COUNT - 1] = {0};
     static u8 triggerIndex = 0;
     u32 timeSinceLastTrigger = 0;
 
-    if (triggerIndex == 0) {
-        lastTime = time_ms;
-        triggerIndex++;
-        return;
-    }
+    if (triggerIndex != 0) {
+        timeSinceLastTrigger = _timeMs - lastTime;
+        timeDeltas[triggerIndex - 1] = timeSinceLastTrigger;
 
-    timeSinceLastTrigger = time_ms - lastTime;
-    timeDeltas[triggerIndex - 1] = timeSinceLastTrigger;
-
-    if (timeSinceLastTrigger > MIDI_CLOCK_TIMEOUT)
-        triggerIndex = 0;
-
-    if (triggerIndex >= MIDI_CLOCK_TRIGGER_COUNT - 1) {
-        triggerIndex = 0;
-        u32 average = 0;
-        for (u8 i = 0; i < MIDI_CLOCK_TRIGGER_COUNT - 1; i++) {
-            average += timeDeltas[i];
+        if (timeSinceLastTrigger > MIDI_CLOCK_TIMEOUT) {
+            triggerIndex = 0;
+            hal_plot_led(TYPEPAD, 3 , 0,63,63);
         }
-        average = ((average / (MIDI_CLOCK_TRIGGER_COUNT - 1)) * 60) / 24;
-        midiClockRate = average;
-    }
 
-    lastTime = time_ms;
+        if (triggerIndex >= MIDI_CLOCK_TRIGGER_COUNT - 1) {
+            triggerIndex = 0;
+            u32 average = 0;
+            hal_plot_led(TYPEPAD, 2 , 63,63,63); //1111111111111111111111111
+            for (u8 i = 0; i < MIDI_CLOCK_TRIGGER_COUNT - 1; i++) {
+                average += timeDeltas[i];
+            }
+            average = ((average / (4))); // / 24 * (1/60);
+            _midiClockRate = average;
+        }
+    }
+    if (triggerIndex == 1) {
+        hal_plot_led(TYPEPAD, 2 , 0,0,0);
+        hal_plot_led(TYPEPAD, 3 , 0,0,0);
+    }
+    lastTime = _timeMs;
     triggerIndex++;
+}
+
+u8 page_has_active_buttons(u8 pageIndex) {
+    for (u8 button = 0; button < BUTTON_COUNT; button++) {
+        if (_buttons[_currentPage][button] == ON)
+            return ON;
+    }
+    return OFF;
 }

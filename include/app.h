@@ -199,27 +199,33 @@ void app_surface_event(u8 type, u8 index, u8 value);
  */
 void app_aftertouch_event(u8 index, u8 value);
 
+void load_new_page(u8 channel);
+
 void load_current_page();
 
 void turn_off_button_col(u8 padIndex);
+
+u8 get_button_type(u8 index);
 
 u8 get_button_channel(u8 index);
 
 u8 get_button_index(u8 channel);
 
-u8* get_color_array(u8 currentPage, u8 index);
+const u8* get_color_array(u8 currentPage, u8 index);
 
-u8 is_equal_color_change(u8 channel);
+u8 is_color_change(u8 channel);
 
 void run_color_change();
 
-u8 is_equal_page_change(u8 channel);
+u8 is_page_change(u8 channel);
 
 void run_page_change(u8 channel);
 
-u8 is_equal_button(u8 channel);
+u8 is_pad_button(u8 channel);
 
-u8 is_equal_activate(u8 channel);
+void run_pad_button(u8 channel);
+
+u8 is_activate(u8 channel);
 
 void run_activate();
 
@@ -230,5 +236,7 @@ void save();
 void load();
 
 void triggerMidiClock();
+
+u8 page_has_active_buttons(u8 pageIndex);
 
 #endif
