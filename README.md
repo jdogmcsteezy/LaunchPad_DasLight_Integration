@@ -1,3 +1,7 @@
+# Video
+The plugin in action. https://www.youtube.com/watch?v=cNhypX5D7mw
+Description of what is happening in the comments.
+
 # Original Repo
 This DasLight integration was created using https://github.com/dvhdr/launchpad-pro. The repo by dvhdr gives access to a HAL that allows anyone to create a plug in for the Launchpad-pro device.
 
